@@ -33,17 +33,22 @@ def skill_to_langchain_tool(
             ("user", user_input)
         ])
 
-        # 2. 合并工具：脚本工具 + MCP 工具
-        all_tools = skill.script_tools + mcp_tools
+        # 2. 合并工具：脚本工具（自动发现） + MCP 工具
+        all_available_tools = skill.script_tools + mcp_tools
 
-        # 3. 过滤工具（根据 allowed-tools）
-        allowed_tools = skill.frontmatter.get_allowed_tools()
-        filtered_tools = [
-            t for t in all_tools
-            if t.name in allowed_tools
-        ]
+        # 3. 根据 allowed-tools 过滤工具
+        allowed_tool_names = skill.frontmatter.get_allowed_tools()
+        if allowed_tool_names:
+            # 只绑定允许的工具
+            filtered_tools = [
+                tool for tool in all_available_tools
+                if tool.name in allowed_tool_names
+            ]
+        else:
+            # 如果没有指定 allowed-tools，则使用所有可用工具
+            filtered_tools = all_available_tools
 
-        # 4. 绑定工具到 LLM
+        # 4. 绑定过滤后的工具到 LLM
         llm_with_tools = llm.bind_tools(filtered_tools)
 
         # 5. 创建执行链

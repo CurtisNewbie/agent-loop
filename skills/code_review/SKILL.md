@@ -1,7 +1,7 @@
 ---
 name: code_review
 description: Perform comprehensive code review with security analysis
-allowed-tools: "read_file, write_file, code_review_linter, code_review_security_check"
+allowed-tools: "read_file, list_directory, code_review_linter, code_review_security_check"
 version: 1.0.0
 license: MIT
 ---

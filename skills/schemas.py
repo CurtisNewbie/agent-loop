@@ -5,10 +5,14 @@ from langchain_core.tools import BaseTool
 
 
 class SkillFrontmatter(BaseModel):
-    """SKILL.md Frontmatter 数据模型"""
+    """SKILL.md Frontmatter 数据模型（Claude Code 兼容）"""
     name: str = Field(..., description="Skill 唯一标识符")
     description: str = Field(..., description="Skill 功能描述（用于 LLM 匹配）")
-    allowed_tools: Optional[str] = Field(None, alias='allowed-tools', description="允许使用的工具列表（逗号分隔）")
+    allowed_tools: Optional[str] = Field(
+        None,
+        alias="allowed-tools",
+        description="允许使用的工具列表（逗号分隔）"
+    )
     version: Optional[str] = Field("1.0.0", description="Skill 版本号")
     license: Optional[str] = Field(None, description="许可证类型")
 
@@ -17,10 +21,10 @@ class SkillFrontmatter(BaseModel):
     }
 
     def get_allowed_tools(self) -> List[str]:
-        """解析 allowed_tools 字符串为列表"""
+        """解析 allowed_tools 字符串为工具名称列表"""
         if not self.allowed_tools:
             return []
-        return [tool.strip() for tool in self.allowed_tools.split(",")]
+        return [tool.strip() for tool in self.allowed_tools.split(",") if tool.strip()]
 
 
 class Skill(BaseModel):

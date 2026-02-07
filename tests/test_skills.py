@@ -20,11 +20,6 @@ class TestSkillLoader:
         assert skill.frontmatter.version == "1.0.0"
         assert "comprehensive code review" in skill.frontmatter.description.lower()
 
-        # 验证工具列表
-        allowed_tools = skill.frontmatter.get_allowed_tools()
-        assert "read_file" in allowed_tools
-        assert "write_file" in allowed_tools
-
         # 验证内容
         assert len(skill.content) > 0
         assert "Code Review Skill" in skill.content
@@ -44,13 +39,12 @@ class TestSkillLoader:
         print(f"  Description: {skill.frontmatter.description}")
         print(f"  Version: {skill.frontmatter.version}")
         print(f"  License: {skill.frontmatter.license}")
-        print(f"  Allowed Tools: {skill.frontmatter.get_allowed_tools()}")
         print(f"\nContent Length: {len(skill.content)} chars")
         print(f"Content Preview: {skill.content[:100]}...")
         print(f"\nScripts: {skill.scripts}")
         print(f"References: {skill.references}")
         print(f"Assets: {skill.assets}")
-        print(f"\nScript Tools: {len(skill.script_tools)} tools")
+        print(f"\nScript Tools (auto-discovered): {len(skill.script_tools)} tools")
         for i, tool in enumerate(skill.script_tools):
             print(f"  [{i}] {tool.name}: {tool.description[:60]}...")
             print(f"      Args: {list(tool.args_schema.model_fields.keys())}")
@@ -169,8 +163,8 @@ class TestSkillConverter:
         assert langchain_tool.args_schema is not None
 
     @pytest.mark.asyncio
-    async def test_skill_tool_filters_allowed_tools(self):
-        """测试 Skill 只使用允许的工具（包括脚本工具）"""
+    async def test_skill_tool_uses_allowed_tools_only(self):
+        """测试 Skill 只使用 allowed-tools 中指定的工具（脚本工具 + MCP 工具）"""
         skill = SkillLoader.load("skills/code_review")
 
         # 创建 mock LLM
@@ -178,7 +172,7 @@ class TestSkillConverter:
         mock_llm.bind_tools = Mock(return_value=mock_llm)
         mock_llm.ainvoke = AsyncMock(return_value=Mock(tool_calls=[], content="result"))
 
-        # 创建多个 MCP tools
+        # 创建多个 MCP tools（包括允许的和不允许的）
         mock_read_tool = Mock(name="read_file")
         mock_read_tool.name = "read_file"
         mock_read_tool.ainvoke = AsyncMock(return_value="file content")
@@ -198,18 +192,23 @@ class TestSkillConverter:
         # 验证：Tool 创建成功
         assert langchain_tool.name == "code_review"
 
-        # 执行 Tool 以触发过滤逻辑
+        # 执行 Tool 以触发工具绑定
         await langchain_tool.ainvoke({"user_input": "test"})
 
-        # 验证：bind_tools 被调用且只包含允许的工具
+        # 验证：bind_tools 被调用
         mock_llm.bind_tools.assert_called()
         call_args = mock_llm.bind_tools.call_args[0][0]
 
-        # 只应该包含 read_file 和 write_file
-        allowed_tool_names = [t.name for t in call_args]
-        assert "read_file" in allowed_tool_names
-        assert "write_file" in allowed_tool_names
-        assert "other_tool" not in allowed_tool_names
+        # 应该只包含允许的 MCP 工具（read_file 在 allowed-tools 中）
+        bound_tool_names = [t.name for t in call_args]
+        assert "read_file" in bound_tool_names
+        # write_file 和 other_tool 不在 allowed-tools 中，不应包含
+        assert "write_file" not in bound_tool_names
+        assert "other_tool" not in bound_tool_names
+
+        # 也应该包含脚本工具
+        assert "code_review_linter" in bound_tool_names
+        assert "code_review_security_check" in bound_tool_names
 
     @pytest.mark.asyncio
     async def test_skill_includes_script_tools(self):
@@ -238,6 +237,101 @@ class TestSkillConverter:
         tool_names = [t.name for t in call_args]
         assert "code_review_linter" in tool_names
         assert "code_review_security_check" in tool_names
+
+    @pytest.mark.asyncio
+    async def test_allowed_tools_filtering(self):
+        """测试 allowed-tools 字段正确过滤工具"""
+        skill = SkillLoader.load("skills/code_review")
+
+        # 创建 mock LLM
+        mock_llm = Mock()
+        mock_llm.bind_tools = Mock(return_value=mock_llm)
+        mock_llm.ainvoke = AsyncMock(return_value=Mock(tool_calls=[], content="result"))
+
+        # 创建多个 MCP tools（包括允许的和不允许的）
+        mock_read_tool = Mock(name="read_file")
+        mock_read_tool.name = "read_file"
+        mock_read_tool.ainvoke = AsyncMock(return_value="file content")
+
+        mock_list_tool = Mock(name="list_directory")
+        mock_list_tool.name = "list_directory"
+        mock_list_tool.ainvoke = AsyncMock(return_value=["file1.py", "file2.py"])
+
+        mock_write_tool = Mock(name="write_file")
+        mock_write_tool.name = "write_file"
+        mock_write_tool.ainvoke = AsyncMock(return_value="written")
+
+        mock_delete_tool = Mock(name="delete_file")
+        mock_delete_tool.name = "delete_file"
+        mock_delete_tool.ainvoke = AsyncMock(return_value="deleted")
+
+        mcp_tools = [mock_read_tool, mock_list_tool, mock_write_tool, mock_delete_tool]
+
+        # 转换 Skill
+        langchain_tool = skill_to_langchain_tool(skill, mock_llm, mcp_tools)
+
+        # 执行 Tool 以触发工具绑定
+        await langchain_tool.ainvoke({"user_input": "test"})
+
+        # 验证：bind_tools 被调用
+        mock_llm.bind_tools.assert_called()
+        call_args = mock_llm.bind_tools.call_args[0][0]
+
+        # 获取绑定的工具名称
+        bound_tool_names = [t.name for t in call_args]
+
+        # 验证：只包含允许的工具（根据 SKILL.md 中的 allowed-tools）
+        # code_review skill 允许: read_file, list_directory, code_review_linter, code_review_security_check
+        assert "read_file" in bound_tool_names
+        assert "list_directory" in bound_tool_names
+        assert "code_review_linter" in bound_tool_names
+        assert "code_review_security_check" in bound_tool_names
+
+        # 验证：不包含不允许的工具
+        assert "write_file" not in bound_tool_names
+        assert "delete_file" not in bound_tool_names
+
+    @pytest.mark.asyncio
+    async def test_no_allowed_tools_uses_all_tools(self):
+        """测试当未指定 allowed-tools 时，使用所有可用工具"""
+        # 创建一个不带 allowed-tools 的 Skill
+        from skills.schemas import SkillFrontmatter
+        custom_skill = Skill(
+            frontmatter=SkillFrontmatter(
+                name="test_skill",
+                description="Test skill without allowed-tools"
+            ),
+            content="Test content",
+            skill_path="/fake/path",
+            script_tools=[]
+        )
+
+        # 创建 mock LLM
+        mock_llm = Mock()
+        mock_llm.bind_tools = Mock(return_value=mock_llm)
+        mock_llm.ainvoke = AsyncMock(return_value=Mock(tool_calls=[], content="result"))
+
+        # 创建 MCP tools
+        mock_tool1 = Mock(name="tool1")
+        mock_tool1.name = "tool1"
+        mock_tool2 = Mock(name="tool2")
+        mock_tool2.name = "tool2"
+
+        mcp_tools = [mock_tool1, mock_tool2]
+
+        # 转换 Skill
+        langchain_tool = skill_to_langchain_tool(custom_skill, mock_llm, mcp_tools)
+
+        # 执行 Tool
+        await langchain_tool.ainvoke({"user_input": "test"})
+
+        # 验证：所有工具都被绑定
+        mock_llm.bind_tools.assert_called()
+        call_args = mock_llm.bind_tools.call_args[0][0]
+        bound_tool_names = [t.name for t in call_args]
+
+        assert "tool1" in bound_tool_names
+        assert "tool2" in bound_tool_names
 
 
 class TestSkillRegistry:
