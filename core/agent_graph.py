@@ -11,10 +11,20 @@ from core.state import AgentState
 class AgentGraphBuilder:
     """Agent Loop Graph 构建器"""
 
-    def __init__(self, llm, skill_registry: SkillRegistry, mcp_tools: list):
+    def __init__(self, llm, skill_registry: SkillRegistry, mcp_tools: list, skill_tools: list = None):
+        """
+        Initialize Agent Graph Builder
+
+        Args:
+            llm: Language model instance
+            skill_registry: Skill registry instance
+            mcp_tools: List of MCP tools
+            skill_tools: List of filtered Skill tools (LangChain Tools). If None, uses all skills.
+        """
         self.llm = llm
         self.skill_registry = skill_registry
         self.mcp_tools = mcp_tools
+        self.skill_tools = skill_tools if skill_tools is not None else skill_registry.get_all_langchain_tools()
 
     def build(self) -> StateGraph:
         """构建 Agent Loop StateGraph"""
@@ -81,9 +91,12 @@ class AgentGraphBuilder:
         return {"intent": intent}
 
     def _select_skill(self, state: AgentState) -> Dict[str, Any]:
-        """根据意图选择合适的 Skill"""
+        """根据意图选择合适的 Skill（仅从可用的 skill_tools 中选择）"""
         intent = state["intent"]
-        available_skills = self.skill_registry.list()
+
+        # 获取可用 skill_tools 对应的 Skill ID
+        available_skill_ids = {tool.name for tool in self.skill_tools}
+        available_skills = [skill for skill in self.skill_registry.list() if skill.id in available_skill_ids]
 
         # 简单匹配策略（实际可使用 LLM 选择）
         selected = None
@@ -99,11 +112,11 @@ class AgentGraphBuilder:
         }
 
     def _execute_with_tools(self, state: AgentState) -> Dict[str, Any]:
-        """LLM 使用所有工具（Skills + MCP Tools）执行任务"""
+        """LLM 使用工具（Skills + MCP Tools）执行任务"""
         from langchain_core.messages import AIMessage
 
-        # 获取所有工具：Skills（转换为 LangChain Tools） + MCP Tools
-        all_tools = self.skill_registry.get_all_langchain_tools() + self.mcp_tools
+        # 获取工具：过滤后的 Skill Tools + MCP Tools
+        all_tools = self.skill_tools + self.mcp_tools
 
         # 绑定工具到 LLM
         llm_with_tools = self.llm.bind_tools(all_tools)

@@ -76,3 +76,35 @@ class SkillRegistry:
         skill_dir = Path(self.skills[skill_id].skill_path)
         new_tool = self.load_and_convert(skill_dir)
         print(f"✓ Skill reloaded: {skill_id}")
+
+    def get_tools_by_skill_ids(self, skill_ids: List[str]) -> List[BaseTool]:
+        """
+        根据 Skill ID 列表获取对应的 LangChain Tools
+
+        Args:
+            skill_ids: Skill ID 列表
+
+        Returns:
+            LangChain Tools 列表
+        """
+        return [
+            self.langchain_tools[skill_id]
+            for skill_id in skill_ids
+            if skill_id in self.langchain_tools
+        ]
+
+    def get_skills_by_ids(self, skill_ids: List[str]) -> List[Skill]:
+        """
+        根据 Skill ID 列表获取对应的 Skill 对象
+
+        Args:
+            skill_ids: Skill ID 列表
+
+        Returns:
+            Skill 对象列表
+        """
+        return [
+            self.skills[skill_id]
+            for skill_id in skill_ids
+            if skill_id in self.skills
+        ]

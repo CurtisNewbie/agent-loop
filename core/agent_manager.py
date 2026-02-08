@@ -34,6 +34,7 @@ class AgentLoopManager:
         self.skill_registry = skill_registry
         self.checkpointer = checkpointer
         self.agents: Dict[str, Runnable] = {}
+        self.agent_configs: Dict[str, Dict[str, any]] = {}  # Store agent configurations
 
         # Support both legacy mcp_tools list and new mcp_server_manager
         # Check if mcp_server_manager is actually a checkpointer (backwards compatibility)
@@ -61,21 +62,54 @@ class AgentLoopManager:
             return self.mcp_server_manager.get_all_tools()
         return self.mcp_tools
 
-    def register_agent(self, agent_id: str) -> Runnable:
-        """注册并编译一个 Agent"""
+    def register_agent(self, agent_id: str, allowed_skills: Optional[List[str]] = None) -> Runnable:
+        """
+        注册并编译一个 Agent
+
+        Args:
+            agent_id: Agent 唯一标识符
+            allowed_skills: 允许该 Agent 使用的 Skill ID 列表。如果为 None，则使用所有 Skills
+
+        Returns:
+            Compiled LangGraph Runnable
+        """
         if agent_id in self.agents:
             return self.agents[agent_id]
 
+        # 保存 Agent 配置
+        self.agent_configs[agent_id] = {"allowed_skills": allowed_skills}
+
+        # 构建并编译
+        compiled = self._build_and_compile(allowed_skills)
+        self.agents[agent_id] = compiled
+
+        return compiled
+
+    def _build_and_compile(self, allowed_skills: Optional[List[str]] = None) -> Runnable:
+        """
+        内部方法：构建并编译 Agent Graph
+
+        Args:
+            allowed_skills: 允许的 Skill ID 列表
+
+        Returns:
+            Compiled LangGraph Runnable
+        """
         # 获取 MCP 工具
         mcp_tools = self.get_mcp_tools()
 
-        # 构建图
-        builder = AgentGraphBuilder(self.llm, self.skill_registry, mcp_tools)
+        # 根据 allowed_skills 过滤 Skill 工具
+        if allowed_skills:
+            skill_tools = self.skill_registry.get_tools_by_skill_ids(allowed_skills)
+        else:
+            skill_tools = self.skill_registry.get_all_langchain_tools()
+
+        # 构建图（传入过滤后的 Skill 工具）
+        builder = AgentGraphBuilder(self.llm, self.skill_registry, mcp_tools, skill_tools)
         graph = builder.build()
 
         # 编译图
         compiled = graph.compile(checkpointer=self.checkpointer)
-        self.agents[agent_id] = compiled
 
         return compiled
 
@@ -84,21 +118,23 @@ class AgentLoopManager:
         return self.agents.get(agent_id)
 
     def reload_agent(self, agent_id: str) -> Runnable:
-        """热重载 Agent"""
+        """
+        热重载 Agent（保留 allowed_skills 配置）
+        """
+        if agent_id not in self.agent_configs:
+            raise ValueError(f"Agent {agent_id} not found")
+
         # 重新加载 Skills
         if hasattr(self.skill_registry, 'reload_all'):
             self.skill_registry.reload_all()
         elif hasattr(self.skill_registry, 'load_all'):
             self.skill_registry.load_all()
 
-        # 获取 MCP 工具
-        mcp_tools = self.get_mcp_tools()
+        # 获取保存的 allowed_skills 配置
+        allowed_skills = self.agent_configs[agent_id].get("allowed_skills")
 
-        # 重新编译图
-        builder = AgentGraphBuilder(self.llm, self.skill_registry, mcp_tools)
-        graph = builder.build()
-        compiled = graph.compile(checkpointer=self.checkpointer)
-
+        # 使用 _build_and_compile 重新构建
+        compiled = self._build_and_compile(allowed_skills)
         self.agents[agent_id] = compiled
 
         return compiled
