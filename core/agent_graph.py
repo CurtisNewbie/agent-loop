@@ -11,7 +11,15 @@ from core.state import AgentState
 class AgentGraphBuilder:
     """Agent Loop Graph 构建器"""
 
-    def __init__(self, llm, skill_registry: SkillRegistry, mcp_tools: list, skill_tools: list = None):
+    def __init__(
+        self,
+        llm,
+        skill_registry: SkillRegistry,
+        mcp_tools: list,
+        skill_tools: list = None,
+        enable_memory_compaction: bool = False,
+        memory_compactor=None,
+    ):
         """
         Initialize Agent Graph Builder
 
@@ -20,11 +28,15 @@ class AgentGraphBuilder:
             skill_registry: Skill registry instance
             mcp_tools: List of MCP tools
             skill_tools: List of filtered Skill tools (LangChain Tools). If None, uses all skills.
+            enable_memory_compaction: Whether to enable memory compaction
+            memory_compactor: MemoryCompactor instance (if None, creates default when enabled)
         """
         self.llm = llm
         self.skill_registry = skill_registry
         self.mcp_tools = mcp_tools
         self.skill_tools = skill_tools if skill_tools is not None else skill_registry.get_all_langchain_tools()
+        self.enable_memory_compaction = enable_memory_compaction
+        self.memory_compactor = memory_compactor
 
     def build(self) -> StateGraph:
         """构建 Agent Loop StateGraph"""
@@ -115,6 +127,11 @@ class AgentGraphBuilder:
         """LLM 使用工具（Skills + MCP Tools）执行任务"""
         from langchain_core.messages import AIMessage
 
+        # Apply memory compaction if enabled
+        messages = state["messages"]
+        if self.enable_memory_compaction and self.memory_compactor:
+            messages = self.memory_compactor.trim_messages(messages)
+
         # 获取工具：过滤后的 Skill Tools + MCP Tools
         all_tools = self.skill_tools + self.mcp_tools
 
@@ -122,7 +139,7 @@ class AgentGraphBuilder:
         llm_with_tools = self.llm.bind_tools(all_tools)
 
         # LLM 推理并执行
-        response = llm_with_tools.invoke(state["messages"])
+        response = llm_with_tools.invoke(messages)
 
         # 确保返回 AIMessage
         if not isinstance(response, AIMessage):
